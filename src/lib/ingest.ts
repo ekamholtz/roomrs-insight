@@ -150,10 +150,12 @@ export async function ingestPortfolio(jsonText: string, options?: { includeAllAg
   console.log("ingestPortfolio start");
   const rows: PortfolioRow[] = JSON.parse(jsonText);
 
+  const safeTrim = (v: any) => (v === null || v === undefined ? "" : String(v).trim());
+
   const includeAll = options?.includeAllAgreementTypes ?? false;
   const filtered = includeAll
     ? rows
-    : rows.filter(r => (r["Agreement Type"] || "").trim().toLowerCase() === "management");
+    : rows.filter(r => safeTrim(r["Agreement Type"]).toLowerCase() === "management");
   console.log(`Portfolio rows (${includeAll ? "including all agreement types" : "filtered to Management"}): ${filtered.length} / ${rows.length}`);
 
   const orgCache = new Map<string, string>();
@@ -161,49 +163,86 @@ export async function ingestPortfolio(jsonText: string, options?: { includeAllAg
   const unitCache = new Map<string, { id: string; org_id: string; building_id: string }>();
   const unitBedrooms = new Map<string, number>(); // unit_id -> max bedrooms
 
-  for (const r of filtered) {
-    const owner = r["Ownership Group"].trim();
-    const buildingName = r["Building"].trim();
-    const unitName = r["Unit"].trim();
-    const roomName = r["Room"].trim();
+  type Issue = {
+    index: number;
+    missing: string[];
+    context: {
+      agreement: string;
+      owner: string;
+      buildingName: string;
+      unitName: string;
+      roomName: string;
+      bedrooms: number;
+    };
+  };
+  const issues: Issue[] = [];
+
+  for (let idx = 0; idx < filtered.length; idx++) {
+    const r = filtered[idx] as any;
+    const agreement = safeTrim(r["Agreement Type"]);
+    const owner = safeTrim(r["Ownership Group"]);
+    const buildingName = safeTrim(r["Building"]);
+    const unitName = safeTrim(r["Unit"]);
+    const roomName = safeTrim(r["Room"]);
     const bedrooms = Number(r["Bedrooms"] ?? 0);
-    const agreement = r["Agreement Type"]?.trim();
 
-    // Org
-    const orgKey = owner.toLowerCase();
-    let org_id = orgCache.get(orgKey);
-    if (!org_id) {
-      org_id = await findOrCreateOrganization(owner);
-      orgCache.set(orgKey, org_id);
+    const missing: string[] = [];
+    if (!owner) missing.push("Ownership Group");
+    if (!buildingName) missing.push("Building");
+    if (!unitName) missing.push("Unit");
+    if (!roomName) missing.push("Room");
+
+    // Record issue metadata (even if we can still partially process)
+    if (missing.length > 0) {
+      issues.push({
+        index: idx,
+        missing,
+        context: { agreement, owner, buildingName, unitName, roomName, bedrooms },
+      });
     }
 
-    // Building
-    const bKey = `${org_id}::${buildingName.toLowerCase()}`;
-    let buildingEntry = buildingCache.get(bKey);
-    if (!buildingEntry) {
-      const building_id = await findOrCreateBuilding(org_id, buildingName);
-      buildingEntry = { id: building_id, org_id };
-      buildingCache.set(bKey, buildingEntry);
+    // Progressive ingestion: only create what we can, in order
+    let org_id: string | null = null;
+    if (owner) {
+      const orgKey = owner.toLowerCase();
+      org_id = orgCache.get(orgKey) ?? null;
+      if (!org_id) {
+        org_id = await findOrCreateOrganization(owner);
+        orgCache.set(orgKey, org_id);
+      }
     }
 
-    // Unit
-    const uKey = `${buildingEntry.id}::${unitName.toLowerCase()}`;
-    let unitEntry = unitCache.get(uKey);
-    if (!unitEntry) {
-      const unit_id = await findOrCreateUnit(buildingEntry.org_id, buildingEntry.id, unitName, agreement);
-      unitEntry = { id: unit_id, org_id: buildingEntry.org_id, building_id: buildingEntry.id };
-      unitCache.set(uKey, unitEntry);
-    } else if (agreement) {
-      // ensure agreement type is set (idempotent)
-      await findOrCreateUnit(buildingEntry.org_id, buildingEntry.id, unitName, agreement);
+    let buildingEntry: { id: string; org_id: string } | null = null;
+    if (org_id && buildingName) {
+      const bKey = `${org_id}::${buildingName.toLowerCase()}`;
+      buildingEntry = buildingCache.get(bKey) ?? null;
+      if (!buildingEntry) {
+        const building_id = await findOrCreateBuilding(org_id, buildingName);
+        buildingEntry = { id: building_id, org_id };
+        buildingCache.set(bKey, buildingEntry);
+      }
     }
 
-    // Room
-    await findOrCreateRoom(unitEntry.id, roomName);
+    let unitEntry: { id: string; org_id: string; building_id: string } | null = null;
+    if (buildingEntry && unitName) {
+      const uKey = `${buildingEntry.id}::${unitName.toLowerCase()}`;
+      unitEntry = unitCache.get(uKey) ?? null;
+      if (!unitEntry) {
+        const unit_id = await findOrCreateUnit(buildingEntry.org_id, buildingEntry.id, unitName, agreement || undefined);
+        unitEntry = { id: unit_id, org_id: buildingEntry.org_id, building_id: buildingEntry.id };
+        unitCache.set(uKey, unitEntry);
+      } else if (agreement) {
+        // ensure agreement type is set (idempotent)
+        await findOrCreateUnit(buildingEntry.org_id, buildingEntry.id, unitName, agreement);
+      }
+    }
 
-    // Bedrooms per unit -> keep max
-    const prev = unitBedrooms.get(unitEntry.id) ?? 0;
-    if (bedrooms > prev) unitBedrooms.set(unitEntry.id, bedrooms);
+    if (unitEntry && roomName) {
+      await findOrCreateRoom(unitEntry.id, roomName);
+      // Bedrooms per unit -> keep max
+      const prev = unitBedrooms.get(unitEntry.id) ?? 0;
+      if (bedrooms > prev) unitBedrooms.set(unitEntry.id, bedrooms);
+    }
   }
 
   // Write room_counts per Unit (delete existing for touched units to avoid duplicates)
@@ -236,15 +275,22 @@ export async function ingestPortfolio(jsonText: string, options?: { includeAllAg
     }
   }
 
-  // Audit log
-  await supabase.from("audit_logs").insert({
+  // Audit log (best-effort)
+  const { error: auditErr } = await supabase.from("audit_logs").insert({
     action: "ingest_portfolio",
     entity_type: "portfolio_json",
-    details: { rows_total: rows.length, rows_ingested: filtered.length, include_all_agreements: includeAll } as any,
+    details: {
+      rows_total: rows.length,
+      rows_processed: filtered.length,
+      include_all_agreements: includeAll,
+      issues_count: issues.length,
+      issues_sample: issues.slice(0, 20).map(i => ({ index: i.index, missing: i.missing, context: i.context })),
+    } as any,
   });
+  if (auditErr) console.warn("audit_logs insert failed", auditErr);
 
   console.log("ingestPortfolio done");
-  return { ingested: filtered.length, total: rows.length };
+  return { ingested: filtered.length, total: rows.length, issuesCount: issues.length, issues } as any;
 }
 
 export async function ingestTransactions(jsonText: string) {

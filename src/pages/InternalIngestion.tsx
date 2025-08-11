@@ -25,6 +25,7 @@ export default function InternalIngestion() {
 
   // Options
   const [includeAllAgreements, setIncludeAllAgreements] = useState(true);
+  const [portfolioIssues, setPortfolioIssues] = useState<any[] | null>(null);
 
   // Excel helpers
   const excelDateToISO = (n: number) => {
@@ -45,8 +46,8 @@ export default function InternalIngestion() {
       const portfolioSheet = wb.Sheets["Roomrs Portfolio"]; // exact name
       const txSheet = wb.Sheets["Transaction_Detail_by_Account"] || wb.Sheets["Transaction Detail by Account"]; // support both
 
-      const portfolioRows = portfolioSheet ? XLSX.utils.sheet_to_json(portfolioSheet, { defval: null }) : [];
-      const txRowsRaw = txSheet ? XLSX.utils.sheet_to_json(txSheet, { defval: null, raw: true }) : [];
+      const portfolioRows = portfolioSheet ? XLSX.utils.sheet_to_json(portfolioSheet, { defval: "" }) : [];
+      const txRowsRaw = txSheet ? XLSX.utils.sheet_to_json(txSheet, { defval: "", raw: true }) : [];
 
       // Normalize entryDate
       const txRows = (txRowsRaw as any[]).map((r) => {
@@ -76,7 +77,10 @@ export default function InternalIngestion() {
     try {
       const payload = portfolioJson.trim() ? portfolioJson : JSON.stringify(excelPortfolioRows);
       const result = await ingestPortfolio(payload, { includeAllAgreementTypes: includeAllAgreements });
-      toast({ title: "Portfolio imported", description: `Ingested ${result.ingested} of ${result.total} rows.` });
+      setPortfolioIssues((result as any).issues ?? []);
+      const issuesCount = (result as any).issuesCount ?? ((result as any).issues?.length ?? 0);
+      const issuesMsg = issuesCount ? ` | ${issuesCount} rows need attention` : "";
+      toast({ title: "Portfolio imported", description: `Ingested ${result.ingested} of ${result.total} rows${issuesMsg}.` });
     } catch (e: any) {
       console.error(e);
       toast({ title: "Portfolio import failed", description: e?.message ?? String(e), variant: "destructive" as any });
@@ -105,6 +109,33 @@ export default function InternalIngestion() {
     } finally {
       setLoadingTransactions(false);
     }
+  };
+
+  const downloadPortfolioIssuesCsv = () => {
+    if (!portfolioIssues?.length) return;
+    const headers = ["index","missing","agreement","owner","buildingName","unitName","roomName","bedrooms"];
+    const esc = (v: any) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    const rows = portfolioIssues.map((i: any) => [
+      i.index + 1,
+      (i.missing || []).join("; "),
+      i.context?.agreement ?? "",
+      i.context?.owner ?? "",
+      i.context?.buildingName ?? "",
+      i.context?.unitName ?? "",
+      i.context?.roomName ?? "",
+      i.context?.bedrooms ?? "",
+    ]);
+    const csv = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'portfolio_issues.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -185,6 +216,29 @@ export default function InternalIngestion() {
           </CardContent>
         </Card>
       </div>
+
+      {portfolioIssues && portfolioIssues.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Data Quality Report</CardTitle>
+            <CardDescription>{portfolioIssues.length} portfolio rows have missing fields. Fix the source sheet and re-ingest.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-3">
+              <Button variant="secondary" onClick={downloadPortfolioIssuesCsv}>Download issues (CSV)</Button>
+              <p className="text-sm text-muted-foreground">Showing first 10 issues below.</p>
+            </div>
+            <ul className="text-sm list-disc pl-5">
+              {portfolioIssues.slice(0, 10).map((i: any, idx: number) => (
+                <li key={idx}>
+                  Row {i.index + 1}: missing {i.missing?.join(', ')} — {i.context?.owner} / {i.context?.buildingName} / {i.context?.unitName} / {i.context?.roomName}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
     </main>
   );
 }
