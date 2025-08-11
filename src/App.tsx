@@ -11,6 +11,7 @@ import InternalDashboard from "./pages/InternalDashboard";
 import PartnerDashboard from "./pages/PartnerDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import InternalIngestion from "./pages/InternalIngestion";
+import InternalPipelines from "./pages/InternalPipelines";
 
 const queryClient = new QueryClient();
 
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/internal" element={<ProtectedRoute><InternalDashboard /></ProtectedRoute>} />
           <Route path="/internal/ingest" element={<ProtectedRoute><InternalIngestion /></ProtectedRoute>} />
+          <Route path="/internal/pipelines" element={<ProtectedRoute><InternalPipelines /></ProtectedRoute>} />
           <Route path="/partner" element={<ProtectedRoute><PartnerDashboard /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
