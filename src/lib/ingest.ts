@@ -140,7 +140,7 @@ export async function ingestPortfolio(jsonText: string) {
   const rows: PortfolioRow[] = JSON.parse(jsonText);
 
   // Filter to Agreement Type = "Management"
-  const filtered = rows.filter(r => (r["Agreement Type"] || "").toLowerCase() === "management");
+  const filtered = rows.filter(r => (r["Agreement Type"] || "").trim().toLowerCase() === "management");
   console.log(`Portfolio rows (filtered to Management): ${filtered.length} / ${rows.length}`);
 
   const orgCache = new Map<string, string>();
@@ -238,9 +238,21 @@ export async function ingestTransactions(jsonText: string) {
   console.log("ingestTransactions start");
   const rows: TransactionRow[] = JSON.parse(jsonText);
 
+  const dateOnly = (s: string) => {
+    if (!s) return null as any;
+    try {
+      const d = new Date(s);
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${month}-${day}`;
+    } catch {
+      return null as any;
+    }
+  };
+
   // Get distinct room names to map to IDs
   const roomNames = Array.from(new Set(rows.map(r => (r.Rooms || "").trim()).filter(Boolean)));
-  if (roomNames.length === 0) return { inserted: 0, total: rows.length };
+  if (roomNames.length === 0) return { inserted: 0, total: rows.length, unmapped: rows.length, duplicates: 0 } as any;
 
   // Fetch only needed rooms with their parent unit org/building
   const { data: rooms, error: roomsErr } = await supabase
@@ -272,6 +284,7 @@ export async function ingestTransactions(jsonText: string) {
       amount: amountAbs,
       account_name: src.GLAccountName,
       period_month: monthStart(src.entryDate), // YYYY-MM-01
+      entry_date: dateOnly(src.entryDate), // exact entry date for idempotency
       org_id: map?.org_id ?? null,
       building_id: map?.building_id ?? null,
       unit_id: map?.unit_id ?? null,
@@ -280,14 +293,39 @@ export async function ingestTransactions(jsonText: string) {
     };
   });
 
-  // Insert (filter out rows that couldn't be mapped to a room)
+  // Filter out rows that couldn't be mapped to a room
   const validInserts = inserts.filter(i => i.room_id);
   console.log(`Transactions prepared: ${inserts.length}, with room match: ${validInserts.length}`);
 
-  if (validInserts.length > 0) {
-    const { error: insErr } = await supabase.from("transactions").insert(validInserts);
-    if (insErr) throw insErr;
+  // In-memory de-duplication within this batch on (room_id, account_name, entry_date, amount)
+  const seen = new Set<string>();
+  const deduped: typeof validInserts = [] as any;
+  let batchDuplicates = 0;
+  for (const i of validInserts) {
+    const key = `${i.room_id}|${i.account_name ?? ""}|${i.entry_date}|${i.amount}`;
+    if (seen.has(key)) {
+      batchDuplicates++;
+      continue;
+    }
+    seen.add(key);
+    (deduped as any).push(i);
   }
+
+  let insertedCount = 0;
+  let existingDuplicatesSkipped = 0;
+
+  if (deduped.length > 0) {
+    const { data, error: upErr } = await supabase
+      .from("transactions")
+      .upsert(deduped, { onConflict: "room_id,account_name,entry_date,amount", ignoreDuplicates: true })
+      .select("id");
+    if (upErr) throw upErr;
+    insertedCount = data?.length ?? 0;
+    existingDuplicatesSkipped = deduped.length - insertedCount;
+  }
+
+  const unmapped = inserts.length - validInserts.length;
+  const duplicates = batchDuplicates + existingDuplicatesSkipped;
 
   // Audit log
   await supabase.from("audit_logs").insert({
@@ -295,11 +333,13 @@ export async function ingestTransactions(jsonText: string) {
     entity_type: "transactions_json",
     details: {
       rows_total: rows.length,
-      rows_inserted: validInserts.length,
-      unmapped_rooms: inserts.filter(i => !i.room_id).length,
+      rows_inserted: insertedCount,
+      deduped_in_batch: batchDuplicates,
+      duplicates_skipped_existing: existingDuplicatesSkipped,
+      unmapped_rooms: unmapped,
     } as any,
   });
 
   console.log("ingestTransactions done");
-  return { inserted: validInserts.length, total: rows.length, unmapped: inserts.length - validInserts.length };
+  return { inserted: insertedCount, total: rows.length, unmapped, duplicates } as any;
 }

@@ -584,6 +584,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           currency: string
+          entry_date: string | null
           extra_json: Json | null
           id: string
           memo: string | null
@@ -605,6 +606,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          entry_date?: string | null
           extra_json?: Json | null
           id?: string
           memo?: string | null
@@ -626,6 +628,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          entry_date?: string | null
           extra_json?: Json | null
           id?: string
           memo?: string | null

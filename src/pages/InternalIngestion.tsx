@@ -89,8 +89,11 @@ export default function InternalIngestion() {
     try {
       const payload = transactionsJson.trim() ? transactionsJson : JSON.stringify(excelTransactionRows);
       const result = await ingestTransactions(payload);
-      const extra = result.unmapped ? ` (${result.unmapped} rows could not be matched to a Room)` : "";
-      toast({ title: "Transactions imported", description: `Inserted ${result.inserted} of ${result.total} rows${extra}.` });
+      const msgs: string[] = [];
+      if ((result as any).duplicates) msgs.push(`${(result as any).duplicates} duplicates skipped`);
+      if ((result as any).unmapped) msgs.push(`${(result as any).unmapped} unmapped`);
+      const suffix = msgs.length ? ` (${msgs.join(", ")})` : "";
+      toast({ title: "Transactions imported", description: `Inserted ${(result as any).inserted} of ${(result as any).total} rows${suffix}.` });
     } catch (e: any) {
       console.error(e);
       toast({ title: "Transactions import failed", description: e?.message ?? String(e), variant: "destructive" as any });
