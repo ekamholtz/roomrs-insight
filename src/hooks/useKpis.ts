@@ -31,13 +31,24 @@ export function useAvailableMonths() {
   return useQuery({
     queryKey: ["kpi_available_months"],
     queryFn: async () => {
-      // Only consider months that have raw transactions; de-duplicated and sorted desc
+      // Pull available months strictly from transactions; de-duplicated and sorted desc
       const { data: tx, error: txErr } = await supabase
         .from("transactions")
-        .select("period_month");
+        .select("period_month")
+        .order("period_month", { ascending: false });
       if (txErr) throw txErr;
-      const months = Array.from(new Set<string>((tx ?? []).map((r: any) => r.period_month as string)))
-        .sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+      const canonical = (d: string) => {
+        // Normalize to YYYY-MM-01
+        const [y, m] = d.split("-");
+        return `${y}-${m}-01`;
+      };
+      const months = Array.from(
+        new Set<string>((tx ?? [])
+          .map((r: any) => r.period_month as string)
+          .filter(Boolean)
+          .map(canonical)
+        )
+      ).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
       return months;
     },
   });
