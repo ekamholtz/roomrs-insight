@@ -31,21 +31,19 @@ export function useAvailableMonths() {
   return useQuery({
     queryKey: ["kpi_available_months"],
     queryFn: async () => {
-      // Prefer months from kpi_results; fallback to transactions if empty
-      const { data, error } = await supabase
-        .from("kpi_results")
-        .select("period_month")
-        .order("period_month", { ascending: false });
-      if (error) throw error;
-      let months = Array.from(new Set((data ?? []).map((r: any) => r.period_month as string)));
-      if (months.length === 0) {
-        const { data: tx, error: txErr } = await supabase
-          .from("transactions")
-          .select("period_month")
-          .order("period_month", { ascending: false });
-        if (txErr) throw txErr;
-        months = Array.from(new Set((tx ?? []).map((r: any) => r.period_month as string)));
-      }
+      // Union months from kpi_results and transactions, de-duplicated and sorted desc
+      const [{ data: kpi, error: kpiErr }, { data: tx, error: txErr }] = await Promise.all([
+        supabase.from("kpi_results").select("period_month"),
+        supabase.from("transactions").select("period_month"),
+      ]);
+      if (kpiErr) throw kpiErr;
+      if (txErr) throw txErr;
+      const months = Array.from(
+        new Set<string>([
+          ...(kpi ?? []).map((r: any) => r.period_month as string),
+          ...(tx ?? []).map((r: any) => r.period_month as string),
+        ]),
+      ).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
       return months;
     },
   });
