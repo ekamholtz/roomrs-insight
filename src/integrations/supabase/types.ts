@@ -246,6 +246,7 @@ export type Database = {
           kpi_version: number | null
           org_id: string
           period_month: string
+          room_id: string | null
           unit_id: string | null
           value: number
         }
@@ -260,6 +261,7 @@ export type Database = {
           kpi_version?: number | null
           org_id: string
           period_month: string
+          room_id?: string | null
           unit_id?: string | null
           value: number
         }
@@ -274,6 +276,7 @@ export type Database = {
           kpi_version?: number | null
           org_id?: string
           period_month?: string
+          room_id?: string | null
           unit_id?: string | null
           value?: number
         }
@@ -290,6 +293,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kpi_results_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
             referencedColumns: ["id"]
           },
           {
@@ -669,6 +679,7 @@ export type Database = {
       }
       units: {
         Row: {
+          agreement_type: string | null
           building_id: string
           created_at: string
           external_id: string | null
@@ -678,6 +689,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          agreement_type?: string | null
           building_id: string
           created_at?: string
           external_id?: string | null
@@ -687,6 +699,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          agreement_type?: string | null
           building_id?: string
           created_at?: string
           external_id?: string | null
