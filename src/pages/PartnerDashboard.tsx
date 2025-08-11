@@ -57,8 +57,9 @@ export default function PartnerDashboard() {
     new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n ?? 0));
   const fmtMonth = (d: string | null | undefined) => {
     if (!d) return "—";
-    const date = new Date(`${d}T00:00:00Z`);
-    return date.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+    const [y, m] = d.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, (m ?? 1) - 1, 1));
+    return dt.toLocaleDateString(undefined, { year: "numeric", month: "long", timeZone: "UTC" });
   };
 
   return (

@@ -33,8 +33,9 @@ export default function InternalDashboard() {
     new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 }).format(Number(n ?? 0));
   const fmtMonth = (d: string | null | undefined) => {
     if (!d) return "—";
-    const date = new Date(`${d}T00:00:00Z`); // ensure correct month in all timezones
-    return date.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+    const [y, m] = d.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, (m ?? 1) - 1, 1));
+    return dt.toLocaleDateString(undefined, { year: "numeric", month: "long", timeZone: "UTC" });
   };
 
   return (
