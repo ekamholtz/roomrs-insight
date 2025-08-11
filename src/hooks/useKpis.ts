@@ -31,19 +31,13 @@ export function useAvailableMonths() {
   return useQuery({
     queryKey: ["kpi_available_months"],
     queryFn: async () => {
-      // Union months from kpi_results and transactions, de-duplicated and sorted desc
-      const [{ data: kpi, error: kpiErr }, { data: tx, error: txErr }] = await Promise.all([
-        supabase.from("kpi_results").select("period_month"),
-        supabase.from("transactions").select("period_month"),
-      ]);
-      if (kpiErr) throw kpiErr;
+      // Only consider months that have raw transactions; de-duplicated and sorted desc
+      const { data: tx, error: txErr } = await supabase
+        .from("transactions")
+        .select("period_month");
       if (txErr) throw txErr;
-      const months = Array.from(
-        new Set<string>([
-          ...(kpi ?? []).map((r: any) => r.period_month as string),
-          ...(tx ?? []).map((r: any) => r.period_month as string),
-        ]),
-      ).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+      const months = Array.from(new Set<string>((tx ?? []).map((r: any) => r.period_month as string)))
+        .sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
       return months;
     },
   });
@@ -74,7 +68,8 @@ export function useInternalKpiSummary(month: string | null | undefined) {
         .from("kpi_results")
         .select("kpi_name,value,period_month,org_id,building_id,unit_id,room_id")
         .eq("period_month", month)
-        .in("kpi_name", INTERNAL_KPIS as unknown as string[]);
+        .in("kpi_name", INTERNAL_KPIS as unknown as string[])
+        .not("room_id", "is", null);
       if (error) throw error;
       const rows = (data as any[] as KpiRow[]) ?? [];
       const sumByName = new Map<string, number>();
@@ -109,16 +104,23 @@ export type PartnerUnitSummary = {
   noi: number;
 };
 
-export function usePartnerUnitSummary(month: string | null | undefined) {
+export function usePartnerUnitSummary(
+  month: string | null | undefined,
+  orgId?: string | null,
+  buildingId?: string | null
+) {
   return useQuery({
     enabled: !!month,
-    queryKey: ["partner_unit_summary", month],
+    queryKey: ["partner_unit_summary", month, orgId ?? "all", buildingId ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("kpi_results")
         .select("kpi_name,value,unit_id")
         .eq("period_month", month)
         .in("kpi_name", PARTNER_KPIS as unknown as string[]);
+      if (orgId) query = query.eq("org_id", orgId);
+      if (buildingId) query = query.eq("building_id", buildingId);
+      const { data, error } = await query;
       if (error) throw error;
       const rows = (data as any[] as Pick<KpiRow, "kpi_name" | "value" | "unit_id">[]) ?? [];
 

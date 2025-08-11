@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useAvailableMonths, usePartnerUnitSummary } from "@/hooks/useKpis";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 function setSEO(title: string, description: string) {
   document.title = title;
@@ -17,6 +18,8 @@ export default function PartnerDashboard() {
 
   const { data: months } = useAvailableMonths();
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
+  const [selectedBuilding, setSelectedBuilding] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedMonth && months && months.length > 0) {
@@ -24,8 +27,32 @@ export default function PartnerDashboard() {
     }
   }, [months, selectedMonth]);
 
-  const { data: rows, isLoading } = usePartnerUnitSummary(selectedMonth);
+  useEffect(() => {
+    // Reset building when organization changes
+    setSelectedBuilding(null);
+  }, [selectedOrg]);
 
+  const { data: orgs } = useQuery({
+    queryKey: ["orgs"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("organizations").select("id,name").order("name");
+      if (error) throw error;
+      return data as { id: string; name: string }[];
+    },
+  });
+
+  const { data: buildings } = useQuery({
+    queryKey: ["buildings", selectedOrg ?? "all"],
+    queryFn: async () => {
+      let q = supabase.from("buildings").select("id,name,org_id").order("name");
+      if (selectedOrg) q = q.eq("org_id", selectedOrg);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data as { id: string; name: string; org_id: string }[];
+    },
+  });
+
+  const { data: rows, isLoading } = usePartnerUnitSummary(selectedMonth, selectedOrg, selectedBuilding);
   const fmtCurrency = (n: number | undefined) =>
     new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n ?? 0));
   const fmtMonth = (d: string | null | undefined) => {
@@ -39,18 +66,48 @@ export default function PartnerDashboard() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">Partner Portal</h1>
         <p className="text-muted-foreground">Your organization’s statements and KPIs.</p>
-        <div className="mt-4 w-full max-w-xs">
-          <label className="text-sm text-muted-foreground">Period</label>
-          <Select value={selectedMonth ?? undefined} onValueChange={(v) => setSelectedMonth(v)}>
-            <SelectTrigger className="mt-1">
-              <SelectValue placeholder="Select month" />
-            </SelectTrigger>
-            <SelectContent align="start">
-              {months?.map((m) => (
-                <SelectItem key={m} value={m}>{fmtMonth(m)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3 max-w-3xl">
+          <div>
+            <label className="text-sm text-muted-foreground">Period</label>
+            <Select value={selectedMonth ?? undefined} onValueChange={(v) => setSelectedMonth(v)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Select month" />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {months?.map((m) => (
+                  <SelectItem key={m} value={m}>{fmtMonth(m)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground">Organization</label>
+            <Select value={selectedOrg ?? undefined} onValueChange={(v) => setSelectedOrg(v === "__all" ? null : v)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="All organizations" />
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value="__all">All organizations</SelectItem>
+                {orgs?.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground">Building</label>
+            <Select value={selectedBuilding ?? undefined} onValueChange={(v) => setSelectedBuilding(v === "__all" ? null : v)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="All buildings" />
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value="__all">All buildings</SelectItem>
+                {buildings?.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </header>
 <section className="space-y-4">
