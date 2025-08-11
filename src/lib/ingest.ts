@@ -33,6 +33,17 @@ function monthStart(dateStr: string): string {
   return `${year}-${month}-01`;
 }
 
+// Normalize room/unit names for matching: unify dashes, collapse whitespace, lowercase
+function normalizeName(s: string | undefined | null): string {
+  if (!s) return "";
+  return String(s)
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u2012\u2013\u2014\u2212-]+/g, " ") // dash-like to space
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function findOrCreateOrganization(name: string): Promise<string> {
   console.log("findOrCreateOrganization", name);
   const { data: existing, error: selErr } = await supabase
@@ -135,13 +146,15 @@ async function findOrCreateRoom(unit_id: string, name: string): Promise<string> 
   return inserted.id;
 }
 
-export async function ingestPortfolio(jsonText: string) {
+export async function ingestPortfolio(jsonText: string, options?: { includeAllAgreementTypes?: boolean }) {
   console.log("ingestPortfolio start");
   const rows: PortfolioRow[] = JSON.parse(jsonText);
 
-  // Filter to Agreement Type = "Management"
-  const filtered = rows.filter(r => (r["Agreement Type"] || "").trim().toLowerCase() === "management");
-  console.log(`Portfolio rows (filtered to Management): ${filtered.length} / ${rows.length}`);
+  const includeAll = options?.includeAllAgreementTypes ?? false;
+  const filtered = includeAll
+    ? rows
+    : rows.filter(r => (r["Agreement Type"] || "").trim().toLowerCase() === "management");
+  console.log(`Portfolio rows (${includeAll ? "including all agreement types" : "filtered to Management"}): ${filtered.length} / ${rows.length}`);
 
   const orgCache = new Map<string, string>();
   const buildingCache = new Map<string, { id: string; org_id: string }>();
@@ -227,7 +240,7 @@ export async function ingestPortfolio(jsonText: string) {
   await supabase.from("audit_logs").insert({
     action: "ingest_portfolio",
     entity_type: "portfolio_json",
-    details: { rows_total: rows.length, rows_ingested: filtered.length } as any,
+    details: { rows_total: rows.length, rows_ingested: filtered.length, include_all_agreements: includeAll } as any,
   });
 
   console.log("ingestPortfolio done");
@@ -250,48 +263,107 @@ export async function ingestTransactions(jsonText: string) {
     }
   };
 
-  // Get distinct room names to map to IDs
-  const roomNames = Array.from(new Set(rows.map(r => (r.Rooms || "").trim()).filter(Boolean)));
-  if (roomNames.length === 0) return { inserted: 0, total: rows.length, unmapped: rows.length, duplicates: 0 } as any;
-
-  // Fetch only needed rooms with their parent unit org/building
-  const { data: rooms, error: roomsErr } = await supabase
-    .from("rooms")
-    .select("id, name, unit_id, units:unit_id(id, building_id, org_id)")
-    .in("name", roomNames);
-
-  if (roomsErr) throw roomsErr;
-
-  const roomMap = new Map<string, { room_id: string; unit_id: string; building_id: string | null; org_id: string | null }>();
-  for (const r of rooms ?? []) {
-    const name: string = (r as any).name;
-    const unit = (r as any).units;
-    roomMap.set(name, {
-      room_id: (r as any).id,
-      unit_id: unit?.id ?? (r as any).unit_id,
-      building_id: unit?.building_id ?? null,
-      org_id: unit?.org_id ?? null,
-    });
+// Load optional mapping profile "default"
+let mapping: Record<string, string> = {};
+{
+  const { data: mp, error: mpErr } = await supabase
+    .from("mapping_profiles")
+    .select("mapping_json")
+    .eq("name", "default")
+    .maybeSingle();
+  if (!mpErr && (mp as any)?.mapping_json) {
+    mapping = (mp as any).mapping_json as Record<string, string>;
   }
+}
 
-  // Prepare inserts
-  const inserts = rows.map(src => {
-    const roomName = (src.Rooms || "").trim();
-    const map = roomMap.get(roomName);
-    const amountAbs = Math.abs(Number(src.amount || 0));
+const normMap = new Map<string, string>();
+for (const [k, v] of Object.entries(mapping)) {
+  normMap.set(normalizeName(k), v);
+}
 
-    return {
-      amount: amountAbs,
-      account_name: src.GLAccountName,
-      period_month: monthStart(src.entryDate), // YYYY-MM-01
-      entry_date: dateOnly(src.entryDate), // exact entry date for idempotency
-      org_id: map?.org_id ?? null,
-      building_id: map?.building_id ?? null,
-      unit_id: map?.unit_id ?? null,
-      room_id: map?.room_id ?? null,
-      extra_json: { source_entry_date: src.entryDate, original_amount: src.amount, normalized_to_positive: true } as any,
-    };
-  });
+const dashToSpace = (s: string) => s.replace(/[\u2012\u2013\u2014\u2212-]+/g, " ").replace(/\s+/g, " ").trim();
+
+// Collect candidate room names to fetch
+const namesToFetchSet = new Set<string>();
+for (const r of rows) {
+  const raw = (r.Rooms || "").trim();
+  if (!raw) continue;
+  const norm = normalizeName(raw);
+  const mapped = (mapping as any)[raw] ?? normMap.get(norm);
+  const variant = dashToSpace(raw);
+  namesToFetchSet.add(raw);
+  if (variant && variant !== raw) namesToFetchSet.add(variant);
+  if (mapped) {
+    namesToFetchSet.add(mapped);
+    const mappedVariant = dashToSpace(mapped);
+    if (mappedVariant && mappedVariant !== mapped) namesToFetchSet.add(mappedVariant);
+  }
+}
+const namesToFetch = Array.from(namesToFetchSet);
+if (namesToFetch.length === 0) return { inserted: 0, total: rows.length, unmapped: rows.length, duplicates: 0 } as any;
+
+// Fetch rooms with their parent unit org/building
+const { data: rooms, error: roomsErr } = await supabase
+  .from("rooms")
+  .select("id, name, unit_id, units:unit_id(id, building_id, org_id)")
+  .in("name", namesToFetch);
+
+if (roomsErr) throw roomsErr;
+
+const roomByExact = new Map<string, { room_id: string; unit_id: string; building_id: string | null; org_id: string | null }>();
+const roomByNorm = new Map<string, { room_id: string; unit_id: string; building_id: string | null; org_id: string | null }>();
+for (const r of rooms ?? []) {
+  const name: string = (r as any).name;
+  const unit = (r as any).units;
+  const info = {
+    room_id: (r as any).id,
+    unit_id: unit?.id ?? (r as any).unit_id,
+    building_id: unit?.building_id ?? null,
+    org_id: unit?.org_id ?? null,
+  };
+  roomByExact.set(name, info);
+  roomByNorm.set(normalizeName(name), info);
+}
+
+// Resolve by mapped/raw/norm with fallbacks
+const resolveRoomInfo = (rawName: string) => {
+  const rawTrim = (rawName || "").trim();
+  const norm = normalizeName(rawTrim);
+  const mapped = (mapping as any)[rawTrim] ?? normMap.get(norm) ?? null;
+
+  if (mapped) {
+    const byExact = roomByExact.get(mapped);
+    if (byExact) return byExact;
+    const byNorm = roomByNorm.get(normalizeName(mapped));
+    if (byNorm) return byNorm;
+  }
+  const byExactRaw = roomByExact.get(rawTrim);
+  if (byExactRaw) return byExactRaw;
+  const variant = rawTrim.replace(/[\u2012\u2013\u2014\u2212-]+/g, " ").replace(/\s+/g, " ").trim();
+  const byExactVariant = roomByExact.get(variant);
+  if (byExactVariant) return byExactVariant;
+  const byNormRaw = roomByNorm.get(norm);
+  if (byNormRaw) return byNormRaw;
+  return null;
+};
+
+// Prepare inserts
+const inserts = rows.map(src => {
+  const info = resolveRoomInfo(src.Rooms || "");
+  const amountAbs = Math.abs(Number(src.amount || 0));
+
+  return {
+    amount: amountAbs,
+    account_name: src.GLAccountName,
+    period_month: monthStart(src.entryDate), // YYYY-MM-01
+    entry_date: dateOnly(src.entryDate), // exact entry date for idempotency
+    org_id: info?.org_id ?? null,
+    building_id: info?.building_id ?? null,
+    unit_id: info?.unit_id ?? null,
+    room_id: info?.room_id ?? null,
+    extra_json: { source_entry_date: src.entryDate, original_amount: src.amount, normalized_to_positive: true } as any,
+  };
+});
 
   // Filter out rows that couldn't be mapped to a room
   const validInserts = inserts.filter(i => i.room_id);

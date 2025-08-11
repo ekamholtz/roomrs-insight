@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { ingestPortfolio, ingestTransactions } from "@/lib/ingest";
 import * as XLSX from "xlsx";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 export default function InternalIngestion() {
   const { toast } = useToast();
@@ -20,6 +22,9 @@ export default function InternalIngestion() {
   const [excelTransactionRows, setExcelTransactionRows] = useState<any[] | null>(null);
   const [excelFileName, setExcelFileName] = useState<string | null>(null);
   const [parsingExcel, setParsingExcel] = useState(false);
+
+  // Options
+  const [includeAllAgreements, setIncludeAllAgreements] = useState(true);
 
   // Excel helpers
   const excelDateToISO = (n: number) => {
