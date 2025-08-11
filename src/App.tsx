@@ -12,6 +12,7 @@ import PartnerDashboard from "./pages/PartnerDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import InternalIngestion from "./pages/InternalIngestion";
 import InternalPipelines from "./pages/InternalPipelines";
+import AppLayout from "./components/AppLayout";
 
 const queryClient = new QueryClient();
 
@@ -24,10 +25,14 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<AuthPage />} />
-          <Route path="/internal" element={<ProtectedRoute><InternalDashboard /></ProtectedRoute>} />
-          <Route path="/internal/ingest" element={<ProtectedRoute><InternalIngestion /></ProtectedRoute>} />
-          <Route path="/internal/pipelines" element={<ProtectedRoute><InternalPipelines /></ProtectedRoute>} />
-          <Route path="/partner" element={<ProtectedRoute><PartnerDashboard /></ProtectedRoute>} />
+
+          <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+            <Route path="/internal" element={<InternalDashboard />} />
+            <Route path="/internal/ingest" element={<InternalIngestion />} />
+            <Route path="/internal/pipelines" element={<InternalPipelines />} />
+            <Route path="/partner" element={<PartnerDashboard />} />
+          </Route>
+
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
