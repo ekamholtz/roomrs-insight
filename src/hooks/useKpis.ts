@@ -27,6 +27,30 @@ export const PARTNER_KPIS = [
   "partner_noi",
 ] as const;
 
+export function useAvailableMonths() {
+  return useQuery({
+    queryKey: ["kpi_available_months"],
+    queryFn: async () => {
+      // Prefer months from kpi_results; fallback to transactions if empty
+      const { data, error } = await supabase
+        .from("kpi_results")
+        .select("period_month")
+        .order("period_month", { ascending: false });
+      if (error) throw error;
+      let months = Array.from(new Set((data ?? []).map((r: any) => r.period_month as string)));
+      if (months.length === 0) {
+        const { data: tx, error: txErr } = await supabase
+          .from("transactions")
+          .select("period_month")
+          .order("period_month", { ascending: false });
+        if (txErr) throw txErr;
+        months = Array.from(new Set((tx ?? []).map((r: any) => r.period_month as string)));
+      }
+      return months;
+    },
+  });
+}
+
 export function useLatestMonth() {
   return useQuery({
     queryKey: ["kpi_latest_month"],

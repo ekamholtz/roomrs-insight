@@ -1,6 +1,7 @@
-import { useEffect } from "react";
-import { useLatestMonth, usePartnerUnitSummary } from "@/hooks/useKpis";
+import { useEffect, useState } from "react";
+import { useAvailableMonths, usePartnerUnitSummary } from "@/hooks/useKpis";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 
 function setSEO(title: string, description: string) {
@@ -14,14 +15,22 @@ export default function PartnerDashboard() {
     setSEO("Partner Portal – Roomrs Statements", "View and download your scoped monthly statements.");
   }, []);
 
-  const { data: latestMonth } = useLatestMonth();
-  const { data: rows, isLoading } = usePartnerUnitSummary(latestMonth);
+  const { data: months } = useAvailableMonths();
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedMonth && months && months.length > 0) {
+      setSelectedMonth(months[0]);
+    }
+  }, [months, selectedMonth]);
+
+  const { data: rows, isLoading } = usePartnerUnitSummary(selectedMonth);
 
   const fmtCurrency = (n: number | undefined) =>
     new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n ?? 0));
   const fmtMonth = (d: string | null | undefined) => {
     if (!d) return "—";
-    const date = new Date(d);
+    const date = new Date(`${d}T00:00:00Z`);
     return date.toLocaleDateString(undefined, { year: "numeric", month: "long" });
   };
 
@@ -30,9 +39,22 @@ export default function PartnerDashboard() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">Partner Portal</h1>
         <p className="text-muted-foreground">Your organization’s statements and KPIs.</p>
+        <div className="mt-4 w-full max-w-xs">
+          <label className="text-sm text-muted-foreground">Period</label>
+          <Select value={selectedMonth ?? undefined} onValueChange={(v) => setSelectedMonth(v)}>
+            <SelectTrigger className="mt-1">
+              <SelectValue placeholder="Select month" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {months?.map((m) => (
+                <SelectItem key={m} value={m}>{fmtMonth(m)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </header>
 <section className="space-y-4">
-  <div className="text-sm text-muted-foreground">Period: {fmtMonth(latestMonth)}</div>
+  <div className="text-sm text-muted-foreground">Period: {fmtMonth(selectedMonth)}</div>
   <div className="rounded-lg border overflow-x-auto">
     <Table>
       <TableHeader>
