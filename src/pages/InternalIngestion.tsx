@@ -75,7 +75,7 @@ export default function InternalIngestion() {
     setLoadingPortfolio(true);
     try {
       const payload = portfolioJson.trim() ? portfolioJson : JSON.stringify(excelPortfolioRows);
-      const result = await ingestPortfolio(payload);
+      const result = await ingestPortfolio(payload, { includeAllAgreementTypes: includeAllAgreements });
       toast({ title: "Portfolio imported", description: `Ingested ${result.ingested} of ${result.total} rows.` });
     } catch (e: any) {
       console.error(e);
@@ -129,6 +129,10 @@ export default function InternalIngestion() {
               {excelFileName}: {excelPortfolioRows?.length ?? 0} portfolio rows, {excelTransactionRows?.length ?? 0} transaction rows
             </p>
           )}
+          <div className="flex items-center gap-2 pt-2">
+            <Switch id="include-all-excel" checked={includeAllAgreements} onCheckedChange={setIncludeAllAgreements} />
+            <Label htmlFor="include-all-excel" className="text-sm text-muted-foreground">Include all agreement types (recommended)</Label>
+          </div>
           <div className="flex flex-wrap gap-3">
             <Button onClick={handleImportPortfolio} disabled={loadingPortfolio || !(excelPortfolioRows && excelPortfolioRows.length)}>
               {loadingPortfolio ? "Importing..." : "Import Portfolio from Excel"}
@@ -144,7 +148,7 @@ export default function InternalIngestion() {
         <Card>
           <CardHeader>
             <CardTitle>Roomrs Portfolio (JSON)</CardTitle>
-            <CardDescription>Filters to Agreement Type = "Management"; creates orgs/buildings/units/rooms and updates room counts.</CardDescription>
+            <CardDescription>By default filters to Agreement Type = "Management". Toggle "Include all agreement types" to ingest all; creates orgs/buildings/units/rooms and updates room counts.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
@@ -153,6 +157,10 @@ export default function InternalIngestion() {
               placeholder='Paste the Portfolio JSON array here'
               className="min-h-[260px]"
             />
+            <div className="flex items-center gap-2">
+              <Switch id="include-all-json" checked={includeAllAgreements} onCheckedChange={setIncludeAllAgreements} />
+              <Label htmlFor="include-all-json" className="text-sm text-muted-foreground">Include all agreement types (recommended)</Label>
+            </div>
             <Button onClick={handleImportPortfolio} disabled={loadingPortfolio}>
               {loadingPortfolio ? "Importing..." : "Import Portfolio"}
             </Button>
