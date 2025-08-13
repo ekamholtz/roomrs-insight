@@ -309,6 +309,41 @@ export async function ingestTransactions(jsonText: string) {
     }
   };
 
+// Revenue class mapping from GL account names to enum values
+type RevenueClass =
+  | "rent_income"
+  | "utility_fee_income"
+  | "bedroom_cleaning"
+  | "convenience_fee"
+  | "flex_fee_income"
+  | "late_fee_income"
+  | "lease_break_fee_income"
+  | "membership_fee_income";
+
+const revenueClassMap: Record<string, RevenueClass> = {
+  "Rent Income": "rent_income",
+  "Utility Fee Income": "utility_fee_income",
+  "Bedroom Cleaning": "bedroom_cleaning",
+  "Convenience Fee": "convenience_fee",
+  "Flex Fee Income": "flex_fee_income",
+  "Late Fee Income": "late_fee_income",
+  "Lease Break Fee Income": "lease_break_fee_income",
+  "Membership Fee Income": "membership_fee_income",
+};
+
+const KNOWN_REVENUE_CLASSES = new Set<RevenueClass>(Object.values(revenueClassMap));
+
+const isRevenueClass = (v: any): v is RevenueClass =>
+  typeof v === "string" && KNOWN_REVENUE_CLASSES.has(v as RevenueClass);
+
+const toRevClass = (name: string | null | undefined): string | null => {
+  if (!name) return null;
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+};
+
 // Load optional mapping profile "default"
 let mapping: Record<string, string> = {};
 {
@@ -398,9 +433,14 @@ const inserts = rows.map(src => {
   const info = resolveRoomInfo(src.Rooms || "");
   const amountAbs = Math.abs(Number(src.amount || 0));
 
+  const rawAccount = src.GLAccountName || "";
+  const candidate = (revenueClassMap[rawAccount] ?? toRevClass(rawAccount)) as string | null;
+  const revenue_class: RevenueClass | null = isRevenueClass(candidate) ? (candidate as RevenueClass) : null;
+
   return {
     amount: amountAbs,
     account_name: src.GLAccountName,
+    revenue_class,
     period_month: monthStart(src.entryDate), // YYYY-MM-01
     entry_date: dateOnly(src.entryDate), // exact entry date for idempotency
     org_id: info?.org_id ?? null,
@@ -435,7 +475,7 @@ const inserts = rows.map(src => {
   if (deduped.length > 0) {
     const { data, error: upErr } = await supabase
       .from("transactions")
-      .upsert(deduped, { onConflict: "room_id,account_name,entry_date,amount", ignoreDuplicates: true })
+      .upsert(deduped as any, { onConflict: "room_id,account_name,entry_date,amount", ignoreDuplicates: true })
       .select("id");
     if (upErr) throw upErr;
     insertedCount = data?.length ?? 0;
