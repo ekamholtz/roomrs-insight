@@ -47,7 +47,7 @@ export async function buildStagedTransactions(): Promise<StagedTransaction[]> {
   const { data: txs, error: txErr } = await supabase
     .from("transactions")
     .select(
-      `id, amount, account_name, period_month, room_id, unit_id, building_id, org_id,
+      `id, amount, account_name, revenue_class, period_month, room_id, unit_id, building_id, org_id,
        rooms:room_id(id, name, unit_id, units:unit_id(id, name, building_id, org_id, agreement_type)),
        organizations:org_id(id, name),
        buildings:building_id(id, name),
@@ -88,6 +88,69 @@ export async function buildStagedTransactions(): Promise<StagedTransaction[]> {
     building_id: (u as any).building_id ?? null,
   });
 
+  // Load fee entitlement rules (data-driven classification)
+  const { data: entRows, error: entErr } = await supabase
+    .from("fee_entitlements")
+    .select("revenue_class, entitlement, org_id, building_id, unit_id, effective_start, effective_end");
+  if (entErr) throw entErr;
+
+  type EntRow = {
+    revenue_class: string | null;
+    entitlement: string | null;
+    org_id: string | null;
+    building_id: string | null;
+    unit_id: string | null;
+    effective_start: string | null;
+    effective_end: string | null;
+  };
+
+  const today = new Date();
+  const isActive = (e: EntRow) => {
+    const s = e.effective_start ? new Date(e.effective_start) : null;
+    const en = e.effective_end ? new Date(e.effective_end) : null;
+    if (s && s > today) return false;
+    if (en && en < today) return false;
+    return true;
+  };
+
+  const rulesByClass = new Map<string, EntRow[]>();
+  for (const e of (entRows ?? []) as any[]) {
+    const er = e as EntRow;
+    if (!er.revenue_class || !er.entitlement) continue;
+    if (!isActive(er)) continue;
+    const key = String(er.revenue_class).toLowerCase();
+    const arr = rulesByClass.get(key) ?? [];
+    arr.push(er);
+    rulesByClass.set(key, arr);
+  }
+
+  const getEntitlementFor = (
+    org_id: string | null,
+    building_id: string | null,
+    unit_id: string | null,
+    revClass: string
+  ): string | null => {
+    const list = rulesByClass.get(revClass) ?? [];
+    // prioritize by specificity: unit > building > org > global
+    const unitRule = list.find(r => r.unit_id && unit_id && r.unit_id === unit_id);
+    if (unitRule) return String(unitRule.entitlement).toLowerCase();
+    const bldgRule = list.find(r => r.building_id && building_id && r.building_id === building_id);
+    if (bldgRule) return String(bldgRule.entitlement).toLowerCase();
+    const orgRule = list.find(r => r.org_id && org_id && r.org_id === org_id);
+    if (orgRule) return String(orgRule.entitlement).toLowerCase();
+    const globalRule = list.find(r => !r.unit_id && !r.building_id && !r.org_id);
+    if (globalRule) return String(globalRule.entitlement).toLowerCase();
+    return null;
+  };
+
+  const toRevClass = (name: string | null): string | null => {
+    if (!name) return null;
+    return String(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  };
+
   const out: StagedTransaction[] = [];
   for (const raw of items) {
     const unit_id: string | null = (raw as any).unit_id ?? (raw as any).rooms?.unit_id ?? null;
@@ -113,18 +176,13 @@ export async function buildStagedTransactions(): Promise<StagedTransaction[]> {
 
     const gl = (raw as any).account_name ?? null;
 
-    const isLandlordRevenue =
-      gl === "Rent Income" ||
-      gl === "Utility Fee Income" ||
-      (gl === "Flex Fee Income" && orgName === "Centennial Properties");
+    const txnRevClass: string | null = (raw as any).revenue_class ?? null;
+    const revClass: string | null = txnRevClass ?? toRevClass(gl);
 
-    const isRoomrsFee =
-      gl === "Bedroom Cleaning" ||
-      gl === "Convenience Fee" ||
-      gl === "Late Fee Income" ||
-      gl === "Lease Break Fee Income" ||
-      gl === "Membership Fee Income" ||
-      (gl === "Flex Fee Income" && orgName !== "Centennial Properties");
+    const entitlement = revClass ? getEntitlementFor(org_id, building_id, unit_id, revClass) : null;
+
+    const isLandlordRevenue = entitlement === "landlord";
+    const isRoomrsFee = entitlement === "roomrs";
 
     out.push({
       entryDate: period_month, // normalized to first of month already
