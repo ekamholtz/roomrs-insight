@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import { useAvailableMonths, usePartnerUnitSummary } from "@/hooks/useKpis";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { FileDown, FileSpreadsheet } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-
+import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
 function setSEO(title: string, description: string) {
   document.title = title;
   const meta = document.querySelector('meta[name="description"]');
@@ -62,6 +66,70 @@ export default function PartnerDashboard() {
     return dt.toLocaleDateString(undefined, { year: "numeric", month: "long", timeZone: "UTC" });
   };
 
+  const downloadPDF = async () => {
+    if (!rows || rows.length === 0) {
+      toast.info("No statement data available for this period.");
+      return;
+    }
+    const orgName = selectedOrg ? orgs?.find((o) => o.id === selectedOrg)?.name : "All Organizations";
+    const bldgName = selectedBuilding ? buildings?.find((b) => b.id === selectedBuilding)?.name : "All Buildings";
+
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text(`Statement`, 20, 20);
+    doc.setFontSize(12);
+    doc.text(`Organization: ${orgName ?? "—"}`, 20, 30);
+    doc.text(`Building: ${bldgName ?? "—"}`, 20, 38);
+    doc.text(`Period: ${fmtMonth(selectedMonth)}`, 20, 46);
+
+    // Table headers
+    doc.setFontSize(11);
+    doc.text("Unit", 20, 60);
+    doc.text("Total Revenue", 90, 60);
+    doc.text("Mgmt Fee", 130, 60);
+    doc.text("OpEx", 160, 60);
+    doc.text("NOI", 190, 60, { align: "right" });
+
+    let y = 70;
+    rows.forEach((r: any) => {
+      if (y > 280) { // basic page break for A4 portrait
+        doc.addPage();
+        y = 20;
+      }
+      doc.text(String(r.unit_name ?? "—"), 20, y);
+      doc.text(fmtCurrency(r.total_revenue), 90, y);
+      doc.text(fmtCurrency(r.management_fee), 130, y);
+      doc.text(fmtCurrency(r.total_opex), 160, y);
+      doc.text(fmtCurrency(r.noi), 190, y, { align: "right" });
+      y += 8;
+    });
+
+    const fname = `Statement_${selectedMonth ?? "period"}.pdf`;
+    doc.save(fname);
+  };
+
+  const downloadXLSX = async () => {
+    if (!rows || rows.length === 0) {
+      toast.info("No statement data available for this period.");
+      return;
+    }
+    const data = [
+      ["Unit", "Total Revenue", "Management Fee", "OpEx", "NOI"],
+      ...rows.map((r: any) => [
+        r.unit_name,
+        Number(r.total_revenue ?? 0),
+        Number(r.management_fee ?? 0),
+        Number(r.total_opex ?? 0),
+        Number(r.noi ?? 0),
+      ]),
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Statement");
+    const fname = `Statement_${selectedMonth ?? "period"}.xlsx`;
+    XLSX.writeFile(wb, fname);
+  };
+
   return (
     <main className="min-h-screen p-6 bg-background">
       <header className="mb-6">
@@ -113,6 +181,14 @@ export default function PartnerDashboard() {
       </header>
 <section className="space-y-4">
   <div className="text-sm text-muted-foreground">Period: {fmtMonth(selectedMonth)}</div>
+  <div className="flex items-center justify-end gap-2">
+    <Button onClick={downloadPDF}>
+      <FileDown className="mr-2 h-4 w-4" /> Download PDF
+    </Button>
+    <Button variant="secondary" onClick={downloadXLSX}>
+      <FileSpreadsheet className="mr-2 h-4 w-4" /> Download XLSX
+    </Button>
+  </div>
   <div className="rounded-lg border overflow-x-auto">
     <Table>
       <TableHeader>
