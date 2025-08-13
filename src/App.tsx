@@ -12,6 +12,7 @@ import PartnerDashboard from "./pages/PartnerDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import InternalIngestion from "./pages/InternalIngestion";
 import InternalPipelines from "./pages/InternalPipelines";
+import InternalKpiEditor from "./pages/InternalKpiEditor";
 import AppLayout from "./components/AppLayout";
 
 const queryClient = new QueryClient();
@@ -30,6 +31,7 @@ const App = () => (
             <Route path="/internal" element={<InternalDashboard />} />
             <Route path="/internal/ingest" element={<InternalIngestion />} />
             <Route path="/internal/pipelines" element={<InternalPipelines />} />
+            <Route path="/internal/kpis" element={<InternalKpiEditor />} />
             <Route path="/partner" element={<PartnerDashboard />} />
           </Route>
 

@@ -523,7 +523,18 @@ async function insertKpis(rows: { kpi_name: string; value: number; org_id: strin
   if (error) throw error;
 }
 
+async function getActiveKpiNames(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("kpi_definitions")
+    .select("name")
+    .eq("is_active", true);
+  if (error) throw error;
+  return new Set((data ?? []).map((d: any) => String(d.name)));
+}
+
 export async function persistPartnerKPIs(partner: PartnerRevenueRow[]) {
+  const active = await getActiveKpiNames();
+
   const toRows = (name: string, getter: (r: PartnerRevenueRow) => number | null) =>
     partner
       .map(r => ({
@@ -537,22 +548,21 @@ export async function persistPartnerKPIs(partner: PartnerRevenueRow[]) {
       }))
       .filter(r => !isNaN(r.value));
 
-  const rows_total = [
-    ...toRows("partner_total_revenue", r => r.TotalRevenue),
-    ...toRows("partner_management_fee", r => r.ManagementFee),
-    ...toRows("partner_total_opex", r => r.TotalOpEx ?? 0),
-    ...toRows("partner_noi", r => r.NOI),
-  ];
+  const process = async (name: string, rows: ReturnType<typeof toRows>) => {
+    if (!active.has(name)) return;
+    await deleteExistingKpis(name, rows.map(r => ({ period_month: r.period_month })) as any);
+    await insertKpis(rows);
+  };
 
-  await deleteExistingKpis("partner_total_revenue", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("partner_management_fee", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("partner_total_opex", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("partner_noi", rows_total.map(r => ({ period_month: r.period_month })) as any);
-
-  await insertKpis(rows_total);
+  await process("partner_total_revenue", toRows("partner_total_revenue", r => r.TotalRevenue));
+  await process("partner_management_fee", toRows("partner_management_fee", r => r.ManagementFee));
+  await process("partner_total_opex", toRows("partner_total_opex", r => r.TotalOpEx ?? 0));
+  await process("partner_noi", toRows("partner_noi", r => r.NOI));
 }
 
 export async function persistInternalKPIs(internal: InternalMetricsRow[]) {
+  const active = await getActiveKpiNames();
+
   const toRows = (name: string, getter: (r: InternalMetricsRow) => number | null) =>
     internal
       .map(r => ({
@@ -566,23 +576,18 @@ export async function persistInternalKPIs(internal: InternalMetricsRow[]) {
       }))
       .filter(r => !isNaN(r.value));
 
-  const rows_total = [
-    ...toRows("internal_gross_revenue", r => r.GrossRevenue),
-    ...toRows("internal_landlord_revenue", r => r.LandlordRevenue),
-    ...toRows("internal_roomrs_fee_income", r => r.RoomrsFeeIncome),
-    ...toRows("internal_management_fee", r => r.ManagementFee),
-    ...toRows("internal_roomrs_total_revenue", r => r.RoomrsTotalRevenue),
-    ...toRows("internal_take_rate_pct", r => r.TakeRatePct),
-  ];
+  const process = async (name: string, rows: ReturnType<typeof toRows>) => {
+    if (!active.has(name)) return;
+    await deleteExistingKpis(name, rows.map(r => ({ period_month: r.period_month })) as any);
+    await insertKpis(rows);
+  };
 
-  await deleteExistingKpis("internal_gross_revenue", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("internal_landlord_revenue", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("internal_roomrs_fee_income", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("internal_management_fee", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("internal_roomrs_total_revenue", rows_total.map(r => ({ period_month: r.period_month })) as any);
-  await deleteExistingKpis("internal_take_rate_pct", rows_total.map(r => ({ period_month: r.period_month })) as any);
-
-  await insertKpis(rows_total);
+  await process("internal_gross_revenue", toRows("internal_gross_revenue", r => r.GrossRevenue));
+  await process("internal_landlord_revenue", toRows("internal_landlord_revenue", r => r.LandlordRevenue));
+  await process("internal_roomrs_fee_income", toRows("internal_roomrs_fee_income", r => r.RoomrsFeeIncome));
+  await process("internal_management_fee", toRows("internal_management_fee", r => r.ManagementFee));
+  await process("internal_roomrs_total_revenue", toRows("internal_roomrs_total_revenue", r => r.RoomrsTotalRevenue));
+  await process("internal_take_rate_pct", toRows("internal_take_rate_pct", r => r.TakeRatePct));
 }
 
 export async function runAllPipelines() {

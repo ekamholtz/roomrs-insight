@@ -1,4 +1,4 @@
-import { Home, Upload, PlayCircle, Building2 } from "lucide-react";
+import { Home, Upload, PlayCircle, Building2, BarChart3 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -16,6 +16,7 @@ const items = [
   { title: "Home", url: "/internal", icon: Home },
   { title: "Upload Data", url: "/internal/ingest", icon: Upload },
   { title: "Run Pipelines", url: "/internal/pipelines", icon: PlayCircle },
+  { title: "KPI Editor", url: "/internal/kpis", icon: BarChart3 },
   { title: "Partner", url: "/partner", icon: Building2 },
 ];
 
