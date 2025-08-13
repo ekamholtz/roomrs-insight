@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
 function setSEO(title: string, description: string) {
@@ -32,6 +34,13 @@ export default function InternalKpiEditor() {
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editJson, setEditJson] = useState<string>("");
+
+  // Create form state
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createVersion, setCreateVersion] = useState<string>("1");
+  const [createActive, setCreateActive] = useState<boolean>(false);
+  const [createSpec, setCreateSpec] = useState<string>("{\n  \"formula\": \"\"\n}");
 
   useEffect(() => {
     setSEO("KPI Definitions Editor - Internal", "Manage active KPI definitions and specs.");
@@ -82,12 +91,78 @@ export default function InternalKpiEditor() {
     }
   }
 
+  async function createNew() {
+    try {
+      const name = createName.trim();
+      if (!name) {
+        toast.error("Name is required");
+        return;
+      }
+      let spec: any = {};
+      if (createSpec.trim()) spec = JSON.parse(createSpec);
+      const version = Math.max(1, parseInt(createVersion || "1", 10) || 1);
+      const { error } = await supabase.from("kpi_definitions").insert({
+        name,
+        version,
+        is_active: createActive,
+        spec_json: spec,
+      });
+      if (error) throw error;
+      toast.success("KPI created");
+      setCreateName("");
+      setCreateVersion("1");
+      setCreateActive(false);
+      setCreateSpec("{\n  \"formula\": \"\"\n}");
+      setShowCreate(false);
+      await loadDefinitions();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create KPI (check JSON)");
+    }
+  }
+
   return (
     <main className="container mx-auto p-6">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">KPI Definitions Editor</h1>
         <p className="text-muted-foreground mt-1">View and manage KPI definitions used by pipelines.</p>
       </header>
+
+      <section className="mb-6" aria-labelledby="create-kpi">
+        <div className="flex items-center justify-between mb-3">
+          <h2 id="create-kpi" className="text-lg font-medium">Add New KPI</h2>
+          <Button variant="secondary" onClick={() => setShowCreate((v) => !v)}>
+            {showCreate ? "Close" : "Add KPI"}
+          </Button>
+        </div>
+        {showCreate && (
+          <div className="bg-card border rounded-md p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input id="name" placeholder="internal_gross_revenue" value={createName} onChange={(e) => setCreateName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="version">Version</Label>
+                <Input id="version" type="number" min={1} value={createVersion} onChange={(e) => setCreateVersion(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="active">Active</Label>
+                <div className="h-10 flex items-center">
+                  <Switch id="active" checked={createActive} onCheckedChange={setCreateActive} />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="spec">Spec JSON</Label>
+              <Textarea id="spec" rows={8} value={createSpec} onChange={(e) => setCreateSpec(e.target.value)} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+              <Button onClick={createNew}>Create KPI</Button>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section aria-labelledby="kpi-list">
         <Table>
