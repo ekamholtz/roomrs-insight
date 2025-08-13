@@ -9,6 +9,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 function setSEO(title: string, description: string) {
   document.title = title;
   const meta = document.querySelector('meta[name="description"]');
@@ -65,6 +67,32 @@ export default function PartnerDashboard() {
     const dt = new Date(Date.UTC(y, (m ?? 1) - 1, 1));
     return dt.toLocaleDateString(undefined, { year: "numeric", month: "long", timeZone: "UTC" });
   };
+
+  const { data: trendData } = useQuery({
+    queryKey: ["partner_trend", selectedOrg, selectedBuilding, months],
+    queryFn: async () => {
+      if (!months || months.length === 0) return [] as { month: string; NOI: number }[];
+      const sorted = [...months].sort();
+      const recentMonths = sorted.slice(-6);
+      const periodDates = recentMonths.map((m) => `${m}-01`);
+      let q = supabase
+        .from("kpi_results")
+        .select("period_month,value,org_id,building_id")
+        .eq("kpi_name", "partner_noi")
+        .in("period_month", periodDates);
+      if (selectedOrg) q = q.eq("org_id", selectedOrg);
+      if (selectedBuilding) q = q.eq("building_id", selectedBuilding);
+      const { data, error } = await q;
+      if (error) throw error;
+      const totals = new Map<string, number>();
+      (data ?? []).forEach((row: any) => {
+        const key = String(row.period_month).slice(0, 7);
+        const val = Number(row.value ?? 0);
+        totals.set(key, (totals.get(key) ?? 0) + val);
+      });
+      return recentMonths.map((m) => ({ month: fmtMonth(m), NOI: totals.get(m) ?? 0 }));
+    },
+  });
 
   const downloadPDF = async () => {
     if (!rows || rows.length === 0) {
@@ -189,6 +217,20 @@ export default function PartnerDashboard() {
       <FileSpreadsheet className="mr-2 h-4 w-4" /> Download XLSX
     </Button>
   </div>
+  {trendData && trendData.length > 0 && (
+    <div className="rounded-lg border p-4">
+      <h2 className="text-sm font-medium mb-2">NOI trend (last 6 months)</h2>
+      <ChartContainer config={{ NOI: { label: "NOI", color: "hsl(var(--primary))" } }}>
+        <LineChart data={trendData}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="month" />
+          <YAxis />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          <Line type="monotone" dataKey="NOI" stroke="var(--color-NOI)" strokeWidth={2} dot={false} />
+        </LineChart>
+      </ChartContainer>
+    </div>
+  )}
   <div className="rounded-lg border overflow-x-auto">
     <Table>
       <TableHeader>
