@@ -257,6 +257,56 @@ export async function buildUnitOpEx(): Promise<UnitOpExRow[]> {
   const bldgNameById = new Map<string, string>();
   for (const b of bldgs ?? []) bldgNameById.set((b as any).id, (b as any).name);
 
+  // Load active OpEx parameter sets for dynamic cost calculations
+  const { data: opexParams, error: opexErr } = await supabase
+    .from("opex_parameters")
+    .select("org_id, building_id, unit_id, effective_start, effective_end, is_active, cleaning_per_unit, cleaning_per_room, electricity_per_room, gas_per_room, smartlocks_per_unit")
+    .eq("is_active", true);
+  if (opexErr) throw opexErr;
+
+  type OpexParam = {
+    org_id: string | null;
+    building_id: string | null;
+    unit_id: string | null;
+    effective_start: string | null;
+    effective_end: string | null;
+    is_active: boolean;
+    cleaning_per_unit: number | string;
+    cleaning_per_room: number | string;
+    electricity_per_room: number | string;
+    gas_per_room: number | string;
+    smartlocks_per_unit: number | string;
+  };
+
+  const today = new Date();
+  const isParamActive = (p: OpexParam) => {
+    const s = p.effective_start ? new Date(p.effective_start) : null;
+    const e = p.effective_end ? new Date(p.effective_end) : null;
+    if (s && s > today) return false;
+    if (e && e < today) return false;
+    return true;
+  };
+
+  const activeParams = (opexParams ?? []).filter(p => isParamActive(p as any)) as OpexParam[];
+
+  const DEFAULT_OPEX = {
+    cleaning_per_unit: 75,
+    cleaning_per_room: 15,
+    electricity_per_room: 150,
+    gas_per_room: 25,
+    smartlocks_per_unit: 30,
+  };
+
+  function getOpExParams(orgId: string | null, buildingId: string | null, unitId: string | null) {
+    const unitMatch = activeParams.find(p => p.unit_id && unitId && p.unit_id === unitId);
+    if (unitMatch) return unitMatch;
+    const bldgMatch = activeParams.find(p => p.building_id && buildingId && p.building_id === buildingId && !p.unit_id);
+    if (bldgMatch) return bldgMatch;
+    const orgMatch = activeParams.find(p => p.org_id && orgId && p.org_id === orgId && !p.building_id && !p.unit_id);
+    if (orgMatch) return orgMatch;
+    return DEFAULT_OPEX as unknown as OpexParam;
+  }
+
   const out: UnitOpExRow[] = [];
   for (const r of rc ?? []) {
     const unit_id = (r as any).unit_id as string;
@@ -266,10 +316,11 @@ export async function buildUnitOpEx(): Promise<UnitOpExRow[]> {
     const org_id = orgIdByUnit.get(unit_id) ?? null;
     const building_id = bldgIdByUnit.get(unit_id) ?? null;
 
-    const Cleaning = 75 + 15 * roomCount;
-    const Electricity = 150 * roomCount;
-    const Gas = 25 * roomCount;
-    const SmartLocks = 30;
+    const p = getOpExParams(org_id, building_id, unit_id);
+    const Cleaning = Number((p as any).cleaning_per_unit ?? DEFAULT_OPEX.cleaning_per_unit) + Number((p as any).cleaning_per_room ?? DEFAULT_OPEX.cleaning_per_room) * roomCount;
+    const Electricity = Number((p as any).electricity_per_room ?? DEFAULT_OPEX.electricity_per_room) * roomCount;
+    const Gas = Number((p as any).gas_per_room ?? DEFAULT_OPEX.gas_per_room) * roomCount;
+    const SmartLocks = Number((p as any).smartlocks_per_unit ?? DEFAULT_OPEX.smartlocks_per_unit);
     const TotalOpEx = Cleaning + Electricity + Gas + SmartLocks;
 
     out.push({
