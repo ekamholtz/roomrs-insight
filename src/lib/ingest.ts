@@ -475,7 +475,7 @@ const inserts = rows.map(src => {
   if (deduped.length > 0) {
     const { data, error: upErr } = await supabase
       .from("transactions")
-      .upsert(deduped as any, { onConflict: "room_id,account_name,entry_date,amount", ignoreDuplicates: true })
+      .upsert(deduped as any, { onConflict: "room_id,account_name,entry_date,amount", ignoreDuplicates: false })
       .select("id");
     if (upErr) throw upErr;
     insertedCount = data?.length ?? 0;
